@@ -158,6 +158,7 @@ impl Drop for RouterSocketInner {
 }
 
 /// The send half of a [`RouterSocket`] produced by [`RouterSocket::split`].
+#[derive(Clone)]
 pub struct RouterSendHalf {
     inner: Arc<RouterSocketInner>,
 }
