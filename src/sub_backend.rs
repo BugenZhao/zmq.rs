@@ -205,15 +205,44 @@ impl SubSocketBackend {
 
     /// Reliably send a message to every connected peer using async send.
     async fn broadcast_control_message(&self, message: ZmqMessage) -> ZmqResult<()> {
+        let mut dead_peers = Vec::new();
+        let mut first_error = None;
         let mut iter = self.peers.begin_async().await;
         while let Some(mut peer) = iter {
-            peer.send_queue
+            let peer_id = peer.key().clone();
+            let result = peer
+                .send_queue
                 .as_mut()
                 .send(Message::Message(message.clone()))
-                .await?;
+                .await;
+            match result {
+                Ok(()) => {}
+                Err(e)
+                    if matches!(
+                        &e,
+                        CodecError::Io(io_error) if io_error.kind() == ErrorKind::BrokenPipe
+                    ) =>
+                {
+                    dead_peers.push(peer_id);
+                    first_error.get_or_insert(e.into());
+                }
+                Err(e) => {
+                    log::error!(
+                        "Error sending control message to peer {:?}: {:?}",
+                        peer_id,
+                        e
+                    );
+                    first_error.get_or_insert(e.into());
+                }
+            }
             iter = peer.next_async().await;
         }
-        Ok(())
+
+        for peer_id in dead_peers {
+            self.peer_disconnected(&peer_id);
+        }
+
+        first_error.map_or(Ok(()), Err)
     }
 }
 
